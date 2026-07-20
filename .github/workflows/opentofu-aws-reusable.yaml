@@ -1,0 +1,73 @@
+name: OpenTofu Infrastructure Deployment - AWS
+
+on:
+  workflow_call:
+    inputs:
+      working_directory:
+        required: true
+        type: string
+      tofu_version:
+        required: true
+        type: string
+      apply_on_main:
+        required: true
+        type: boolean
+      run_plan:
+        required: true
+        type: boolean
+      environment:
+        required: true
+        type: string
+      runner:
+        required: true
+        type: string
+      container_image:
+        required: true
+        type: string
+      aws_iam_role:
+        required: true
+        type: string
+      aws_region:
+        required: true
+        type: string
+      vpc_id:
+        required: true
+        type: string
+    secrets:
+      inherit
+
+jobs:
+  opentofu:
+    name: OpenTofu ${{ inputs.environment }}
+    runs-on: ${{ inputs.runner }}
+    container:
+      image: ${{ inputs.container_image }}
+    environment: ${{ inputs.environment }}
+    
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Setup OpenTofu
+        uses: opentofu/setup-opentofu@v1
+        with:
+          tofu_version: ${{ inputs.tofu_version }}
+      
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ inputs.aws_iam_role }}
+          aws-region: ${{ inputs.aws_region }}
+      
+      - name: OpenTofu Init
+        run: tofu init
+        working-directory: ${{ inputs.working_directory }}
+      
+      - name: OpenTofu Plan
+        if: ${{ inputs.run_plan }}
+        run: tofu plan -out=tfplan
+        working-directory: ${{ inputs.working_directory }}
+      
+      - name: OpenTofu Apply
+        if: ${{ inputs.apply_on_main && !inputs.run_plan }}
+        run: tofu apply -auto-approve tfplan
+        working-directory: ${{ inputs.working_directory }}
