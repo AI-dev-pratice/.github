@@ -1,0 +1,156 @@
+name: OpenTofu Infrastructure Deployment - AWS
+
+on:
+  workflow_call:
+    inputs:
+      working_directory:
+        description: 'Directory containing OpenTofu/Terraform files'
+        default: './'
+        type: string
+      tofu_version:
+        description: 'OpenTofu version to install'
+        default: 'latest'
+        type: string
+      apply_on_main:
+        description: 'Whether to auto-apply changes on main branch'
+        default: true
+        type: boolean
+      run_plan:
+        description: 'Whether to run the plan step'
+        default: true
+        type: boolean
+      runner:
+        description: 'GitHub Actions runner to use'
+        type: string
+      environment:
+        description: 'Deployment environment (dev/prod)'
+        required: true
+        type: string
+      container_image:
+        description: 'Container image to use for running jobs'
+        default: 'ubuntu:latest'
+        type: string
+      aws_iam_role:
+        description: 'AWS IAM Role ARN to assume'
+        required: true
+        type: string
+      aws_region:
+        description: 'AWS Region for deployment'
+        default: 'us-east-1'
+        type: string
+      vpc_id:
+        description: 'VPC ID for deployment'
+        required: true
+        type: string
+      destroy:
+        description: 'Whether to destroy infrastructure instead of apply'
+        default: false
+        type: boolean
+
+    secrets:
+      DEVOPS_GITHUB_APICLIENT_PRIVATE_KEY:
+        description: 'GitHub App private key (optional for private modules)'
+        required: false
+
+permissions:
+  contents: read
+  pull-requests: write
+  id-token: write
+
+jobs:
+  opentofu:
+    runs-on: ${{ inputs.runner || 'ubuntu-latest' }}
+    environment: ${{ inputs.environment }}
+    container:
+      image: ${{ inputs.container_image }}
+    defaults:
+      run:
+        working-directory: ${{ inputs.working_directory }}
+    env:
+      # AWS credentials via OIDC (set by configure-aws-credentials)
+      # AWS_ROLE_ARN, AWS_WEB_IDENTITY_TOKEN_FILE, AWS_ROLE_SESSION_NAME set automatically
+
+      # OpenTofu standard TF_VARs for AWS
+      TF_VAR_environment: ${{ inputs.environment }}
+      TF_VAR_env: ${{ inputs.environment }}
+      TF_VAR_region: ${{ inputs.aws_region }}
+      TF_VAR_vpc_id: ${{ inputs.vpc_id }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # Configure AWS credentials using OIDC
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ inputs.aws_iam_role }}
+          aws-region: ${{ inputs.aws_region }}
+          role-session-name: opentofu-deployment-${{ inputs.environment }}-${{ github.run_id }}
+
+      # Generate GitHub App Token (optional - only if using private modules)
+      - name: Generate GitHub App Token
+        if: ${{ env.GITHUB_APP_PRIVATE_KEY != '' }}
+        id: generate-token
+        env:
+          GITHUB_APP_PRIVATE_KEY: ${{ secrets.DEVOPS_GITHUB_APICLIENT_PRIVATE_KEY }}
+        uses: actions/create-github-app-token@v2
+        with:
+          app-id: ${{ secrets.APP_ID }}
+          private-key: ${{ env.GITHUB_APP_PRIVATE_KEY }}
+          owner: Devops
+
+      # Configure Git for Private Module Access
+      - name: Configure Git for Private Module Access
+        if: steps.generate-token.outcome == 'success'
+        run: |
+          git config --global url."https://x-access-token:${GITHUB_TOKEN}@github.com/".insteadOf "https://github.com/"
+          git config --global --add safe.directory '*'
+        env:
+          GITHUB_TOKEN: ${{ steps.generate-token.outputs.token }}
+
+      - uses: opentofu/setup-opentofu@v1
+        with:
+          tofu_version: ${{ inputs.tofu_version }}
+
+      - name: OpenTofu Format Check
+        run: tofu fmt -check -recursive
+
+      - name: Init
+        run: tofu init
+
+      - name: Validate
+        run: tofu validate
+
+      - name: Plan
+        if: ${{ inputs.run_plan && !inputs.destroy }}
+        timeout-minutes: 4
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "Running OpenTofu plan..."
+          tofu plan -input=false -no-color -detailed-exitcode 2>&1 | tee plan.log
+          exit_code=${PIPESTATUS[0]}
+          echo "Plan exit code: $exit_code"
+          if [ $exit_code -eq 1 ]; then
+            echo "❌ Plan failed"
+            exit 1
+          fi
+
+      - name: Apply
+        if: ${{ !inputs.destroy && github.ref == 'refs/heads/main' && ( github.event_name == 'push' || github.event_name == 'workflow_dispatch' ) && inputs.apply_on_main }}
+        run: tofu apply -auto-approve -input=false -no-color
+
+      - name: Plan Destroy
+        if: ${{ inputs.destroy && inputs.run_plan }}
+        timeout-minutes: 4
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "Running OpenTofu plan -destroy..."
+          tofu plan -destroy -input=false -no-color -detailed-exitcode 2>&1 | tee plan-destroy.log
+          exit_code=${PIPESTATUS[0]}
+          echo "Plan destroy exit code: $exit_code"
+
+      - name: Destroy
+        if: ${{ inputs.destroy && !inputs.run_plan && github.ref == 'refs/heads/main' && github.event_name == 'workflow_dispatch' }}
+        run: tofu apply -destroy -auto-approve -input=false -no-colorcolor
