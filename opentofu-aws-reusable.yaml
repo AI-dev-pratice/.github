@@ -89,12 +89,14 @@ jobs:
 
       # Generate GitHub App Token (optional - only if using private modules)
       - name: Generate GitHub App Token
-        if: ${{ secrets.DEVOPS_GITHUB_APICLIENT_PRIVATE_KEY != '' }}
+        if: ${{ env.GITHUB_APP_PRIVATE_KEY != '' }}
         id: generate-token
+        env:
+          GITHUB_APP_PRIVATE_KEY: ${{ secrets.DEVOPS_GITHUB_APICLIENT_PRIVATE_KEY }}
         uses: actions/create-github-app-token@v2
         with:
-          app-id: ${{ secrets.APP_ID }}              
-          private-key: ${{ secrets.DEVOPS_GITHUB_APICLIENT_PRIVATE_KEY }}
+          app-id: ${{ secrets.APP_ID }}
+          private-key: ${{ env.GITHUB_APP_PRIVATE_KEY }}
           owner: Devops
 
       # Configure Git for Private Module Access
