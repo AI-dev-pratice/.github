@@ -79,6 +79,13 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # Install required dependencies in container
+      - name: Install Dependencies
+        run: |
+          apt-get update
+          apt-get install -y unzip curl git
+        continue-on-error: true
+
       # Configure AWS credentials using OIDC
       - name: Configure AWS Credentials
         uses: aws-actions/configure-aws-credentials@v4
@@ -89,15 +96,15 @@ jobs:
 
       # Generate GitHub App Token (optional - only if using private modules)
       - name: Generate GitHub App Token
-        if: ${{ env.GITHUB_APP_PRIVATE_KEY != '' }}
+        if: ${{ secrets.DEVOPS_GITHUB_APICLIENT_PRIVATE_KEY != '' }}
         id: generate-token
         env:
           GITHUB_APP_PRIVATE_KEY: ${{ secrets.DEVOPS_GITHUB_APICLIENT_PRIVATE_KEY }}
-        uses: actions/create-github-app-token@v2
+        uses: actions/create-github-app-token@v1
         with:
           app-id: ${{ secrets.APP_ID }}
           private-key: ${{ env.GITHUB_APP_PRIVATE_KEY }}
-          owner: Devops
+          owner: AI-dev-pratice
 
       # Configure Git for Private Module Access
       - name: Configure Git for Private Module Access
@@ -108,19 +115,25 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ steps.generate-token.outputs.token }}
 
-      - uses: opentofu/setup-opentofu@v1
+      # Setup OpenTofu
+      - name: Setup OpenTofu
+        uses: opentofu/setup-opentofu@v1
         with:
           tofu_version: ${{ inputs.tofu_version }}
 
+      # Format Check
       - name: OpenTofu Format Check
         run: tofu fmt -check -recursive
 
+      # Initialize OpenTofu
       - name: Init
         run: tofu init
 
+      # Validate Configuration
       - name: Validate
         run: tofu validate
 
+      # Plan Changes
       - name: Plan
         if: ${{ inputs.run_plan && !inputs.destroy }}
         timeout-minutes: 4
@@ -136,10 +149,12 @@ jobs:
             exit 1
           fi
 
+      # Apply Changes
       - name: Apply
-        if: ${{ !inputs.destroy && github.ref == 'refs/heads/main' && ( github.event_name == 'push' || github.event_name == 'workflow_dispatch' ) && inputs.apply_on_main }}
+        if: ${{ !inputs.destroy && github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && inputs.apply_on_main }}
         run: tofu apply -auto-approve -input=false -no-color
 
+      # Plan Destroy
       - name: Plan Destroy
         if: ${{ inputs.destroy && inputs.run_plan }}
         timeout-minutes: 4
@@ -151,6 +166,7 @@ jobs:
           exit_code=${PIPESTATUS[0]}
           echo "Plan destroy exit code: $exit_code"
 
+      # Destroy Infrastructure
       - name: Destroy
         if: ${{ inputs.destroy && !inputs.run_plan && github.ref == 'refs/heads/main' && github.event_name == 'workflow_dispatch' }}
-        run: tofu apply -destroy -auto-approve -input=false -no-colorcolor
+        run: tofu apply -destroy -auto-approve -input=false -no-color
