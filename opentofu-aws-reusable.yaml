@@ -89,7 +89,7 @@ jobs:
 
       # Generate GitHub App Token (optional - only if using private modules)
       - name: Generate GitHub App Token
-        if: secrets.DEVOPS_GITHUB_APICLIENT_PRIVATE_KEY != ''
+        if: ${{ secrets.DEVOPS_GITHUB_APICLIENT_PRIVATE_KEY != '' }}
         id: generate-token
         uses: actions/create-github-app-token@v2
         with:
