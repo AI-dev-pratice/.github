@@ -33,8 +33,6 @@ on:
       vpc_id:
         required: true
         type: string
-    secrets:
-      inherit
 
 jobs:
   opentofu:
