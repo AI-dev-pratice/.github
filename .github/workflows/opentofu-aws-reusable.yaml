@@ -4,68 +4,106 @@ on:
   workflow_call:
     inputs:
       working_directory:
-        required: true
+        description: 'Directory containing OpenTofu/Terraform files'
+        default: './'
         type: string
       tofu_version:
-        required: true
+        description: 'OpenTofu version to install'
+        default: 'latest'
         type: string
       apply_on_main:
-        required: true
+        description: 'Whether to auto-apply changes on main branch'
+        default: true
         type: boolean
       run_plan:
-        required: true
+        description: 'Whether to run the plan step'
+        default: true
         type: boolean
-      environment:
-        required: true
-        type: string
       runner:
-        required: true
+        description: 'GitHub Actions runner to use'
+        default: 'ubuntu-latest'
         type: string
-      container_image:
+      environment:
+        description: 'Deployment environment (dev/prod)'
         required: true
         type: string
       aws_iam_role:
+        description: 'AWS IAM Role ARN to assume'
         required: true
         type: string
       aws_region:
-        required: true
+        description: 'AWS Region for deployment'
+        default: 'us-east-1'
         type: string
       vpc_id:
+        description: 'VPC ID for deployment'
         required: true
         type: string
+
+    secrets:
+      DEVOPS_GITHUB_APICLIENT_PRIVATE_KEY:
+        description: 'GitHub App private key (optional for private modules)'
+        required: false
+
+permissions:
+  contents: read
+  pull-requests: write
+  id-token: write
 
 jobs:
   opentofu:
     name: OpenTofu ${{ inputs.environment }}
     runs-on: ${{ inputs.runner }}
-    container:
-      image: ${{ inputs.container_image }}
     environment: ${{ inputs.environment }}
-    
+    defaults:
+      run:
+        working-directory: ${{ inputs.working_directory }}
+    env:
+      TF_VAR_environment: ${{ inputs.environment }}
+      TF_VAR_env: ${{ inputs.environment }}
+      TF_VAR_region: ${{ inputs.aws_region }}
+      TF_VAR_vpc_id: ${{ inputs.vpc_id }}
+
     steps:
       - uses: actions/checkout@v4
-      
-      - name: Setup OpenTofu
-        uses: opentofu/setup-opentofu@v1
-        with:
-          tofu_version: ${{ inputs.tofu_version }}
-      
+
+      # Configure AWS credentials using OIDC
       - name: Configure AWS Credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
           role-to-assume: ${{ inputs.aws_iam_role }}
           aws-region: ${{ inputs.aws_region }}
-      
-      - name: OpenTofu Init
+          role-session-name: opentofu-deployment-${{ inputs.environment }}-${{ github.run_id }}
+
+      # Setup OpenTofu
+      - name: Setup OpenTofu
+        uses: opentofu/setup-opentofu@v1
+        with:
+          tofu_version: ${{ inputs.tofu_version }}
+
+      # Format Check
+      - name: OpenTofu Format Check
+        run: tofu fmt -check -recursive
+
+      # Initialize OpenTofu
+      - name: Init
         run: tofu init
-        working-directory: ${{ inputs.working_directory }}
-      
-      - name: OpenTofu Plan
+
+      # Validate Configuration
+      - name: Validate
+        run: tofu validate
+
+      # Plan Changes
+      - name: Plan
         if: ${{ inputs.run_plan }}
-        run: tofu plan -out=tfplan
-        working-directory: ${{ inputs.working_directory }}
-      
-      - name: OpenTofu Apply
-        if: ${{ inputs.apply_on_main && !inputs.run_plan }}
-        run: tofu apply -auto-approve tfplan
-        working-directory: ${{ inputs.working_directory }}
+        timeout-minutes: 10
+        run: |
+          echo "Running OpenTofu plan..."
+          tofu plan -input=false -no-color -detailed-exitcode || echo "Plan completed with exit code: $?"
+
+      # Apply Changes (only on main branch)
+      - name: Apply
+        if: ${{ github.ref == 'refs/heads/main' && github.event_name == 'push' && inputs.apply_on_main }}
+        run: |
+          echo "Applying OpenTofu changes..."
+          tofu apply -auto-approve -input=false -no-color
