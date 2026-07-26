@@ -1,0 +1,99 @@
+name: OpenTofu Infrastructure - AWS
+
+on:
+  push:
+    branches: [ "main", "develop" ]  # Add develop
+  pull_request:
+    branches: [ "develop", "main" ]
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Environment to deploy'
+        required: false
+        type: choice
+        options:
+        - dev
+        - prod
+        - both
+
+permissions:
+  contents: read
+  pull-requests: write
+  id-token: write
+
+jobs:
+  # ========================================
+  # DEV Environment
+  # ========================================
+  plan_dev:
+    name: 'DEV Plan'
+    if: ${{ github.event_name == 'pull_request' || (github.event_name == 'push' && github.ref == 'refs/heads/develop') || github.event_name == 'workflow_dispatch' }}
+    uses: AI-dev-pratice/.github/.github/workflows/opentofu-aws-reusable.yaml@main
+    with:
+      working_directory: './'
+      tofu_version: 'latest'
+      apply_on_main: false
+      run_plan: true
+      environment: dev
+      runner: "ubuntu-latest"
+      container_image: ubuntu:latest
+      aws_iam_role: ${{ vars.AWS_OIDC_ROLE_ARN_DEV }}
+      aws_region: ${{ vars.AWS_REGION_DEV }}
+      vpc_id: ${{ vars.AWS_VPC_ID_DEV }}
+    secrets: inherit
+
+  apply_dev:
+    name: 'DEV Apply'
+    if: ${{ github.ref == 'refs/heads/main' && github.event_name == 'push' }}
+    needs: plan_dev
+    uses: AI-dev-pratice/.github/.github/workflows/opentofu-aws-reusable.yaml@main
+    with:
+      working_directory: './'
+      tofu_version: 'latest'
+      apply_on_main: true
+      run_plan: false
+      environment: dev
+      runner: "ubuntu-latest"
+      container_image: ubuntu:latest
+      aws_iam_role: ${{ vars.AWS_OIDC_ROLE_ARN_DEV }}
+      aws_region: ${{ vars.AWS_REGION_DEV }}
+      vpc_id: ${{ vars.AWS_VPC_ID_DEV }}
+    secrets: inherit
+
+  # ========================================
+  # PROD Environment
+  # ========================================
+  plan_prod:
+    name: 'PROD Plan'
+    if: ${{ github.event_name == 'pull_request' || (github.event_name == 'push' && github.ref == 'refs/heads/develop') || github.event_name == 'workflow_dispatch' }}
+    uses: AI-dev-pratice/.github/.github/workflows/opentofu-aws-reusable.yaml@main
+    with:
+      working_directory: './'
+      tofu_version: 'latest'
+      apply_on_main: false
+      run_plan: true
+      environment: prod
+      runner: "ubuntu-latest"
+      container_image: ubuntu:latest
+      aws_iam_role: ${{ vars.AWS_OIDC_ROLE_ARN_PROD }}
+      aws_region: ${{ vars.AWS_REGION_PROD }}
+      vpc_id: ${{ vars.AWS_VPC_ID_PROD }}
+    secrets: inherit
+
+  apply_prod:
+    name: 'PROD Apply'
+    if: ${{ github.ref == 'refs/heads/main' && github.event_name == 'push' }}
+    needs: plan_prod
+    uses: AI-dev-pratice/.github/.github/workflows/opentofu-aws-reusable.yaml@main
+    with:
+      working_directory: './'
+      tofu_version: 'latest'
+      apply_on_main: true
+      run_plan: false
+      environment: prod
+      runner: "ubuntu-latest"
+      container_image: ubuntu:latest
+      aws_iam_role: ${{ vars.AWS_OIDC_ROLE_ARN_PROD }}
+      aws_region: ${{ vars.AWS_REGION_PROD }}
+      vpc_id: ${{ vars.AWS_VPC_ID_PROD }}
+    secrets: inherit
