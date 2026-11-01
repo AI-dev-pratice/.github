@@ -1,115 +1,94 @@
-name: OpenTofu Infrastructure Deployment - AWS
+name: OpenTofu Infrastructure - AWS (Reusable)
 
 on:
   workflow_call:
     inputs:
-      working_directory:
-        description: 'Directory containing OpenTofu/Terraform files'
-        default: './'
+      action:
+        description: "plan = fmt/init/validate/plan + upload tfplan; apply = download tfplan + apply"
         type: string
-      tofu_version:
-        description: 'OpenTofu version to install'
-        default: 'latest'
-        type: string
-      apply_on_main:
-        description: 'Whether to auto-apply changes on main branch'
-        default: true
-        type: boolean
-      run_plan:
-        description: 'Whether to run the plan step'
-        default: true
-        type: boolean
-      runner:
-        description: 'GitHub Actions runner to use'
-        default: 'ubuntu-latest'
-        type: string
+        required: true
       environment:
-        description: 'Deployment environment (dev/prod)'
-        required: true
+        description: "Deployment environment (dev/prod)"
         type: string
+        required: true
       aws_iam_role:
-        description: 'AWS IAM Role ARN to assume'
-        required: true
+        description: "AWS IAM Role ARN to assume"
         type: string
+        required: true
+      working_directory:
+        type: string
+        default: "./"
+      tofu_version:
+        type: string
+        default: "1.9.8"
+      runner:
+        type: string
+        default: "ubuntu-latest"
       aws_region:
-        description: 'AWS Region for deployment'
-        default: 'us-east-1'
         type: string
-      vpc_id:
-        description: 'VPC ID for deployment'
-        required: true
-        type: string
-
-    secrets:
-      DEVOPS_GITHUB_APICLIENT_PRIVATE_KEY:
-        description: 'GitHub App private key (optional for private modules)'
-        required: false
+        default: "ap-south-1"
 
 permissions:
   contents: read
-  pull-requests: write
   id-token: write
 
 jobs:
   opentofu:
-    name: OpenTofu ${{ inputs.environment }}
+    name: ${{ inputs.action == 'plan' && 'Plan' || 'Apply' }} - ${{ inputs.environment }}
     runs-on: ${{ inputs.runner }}
     environment: ${{ inputs.environment }}
     defaults:
       run:
         working-directory: ${{ inputs.working_directory }}
     env:
-      TF_VAR_environment: ${{ inputs.environment }}
       TF_VAR_env: ${{ inputs.environment }}
-      # TF_VAR_region: ${{ inputs.aws_region }}
-      # TF_VAR_vpc_id: ${{ inputs.vpc_id }}
+      TF_VAR_environment: ${{ inputs.environment }}
 
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout
+        uses: actions/checkout@v4
 
-      # Configure AWS credentials using OIDC
-      - name: Configure AWS Credentials
+      - name: Configure AWS Credentials (OIDC)
         uses: aws-actions/configure-aws-credentials@v4
         with:
           role-to-assume: ${{ inputs.aws_iam_role }}
-          # aws-region: ${{ inputs.aws_region }}
-          role-session-name: opentofu-deployment-${{ inputs.environment }}-${{ github.run_id }}
+          aws-region: ${{ inputs.aws_region }}
+          role-session-name: opentofu-${{ inputs.action }}-${{ inputs.environment }}-${{ github.run_id }}
 
-      # Setup OpenTofu
       - name: Setup OpenTofu
         uses: opentofu/setup-opentofu@v1
         with:
           tofu_version: ${{ inputs.tofu_version }}
 
-      # Format Check
-      - name: OpenTofu Format Check
+      - name: Format Check
         run: tofu fmt -check -recursive
 
-      # Initialize OpenTofu
       - name: Init
-        run: tofu init
+        run: tofu init -input=false -backend-config=backend-${{ inputs.environment }}.hcl
 
-      # Validate Configuration
       - name: Validate
         run: tofu validate
 
-      # Plan Changes
+      # ---- BUILD (plan) ----
       - name: Plan
-        if: ${{ inputs.run_plan }}
-        timeout-minutes: 10
-        run: |
-          echo "Running OpenTofu plan..."
-          if [ -f terraform.tfvars ]; then
-            echo "Using terraform.tfvars"
-            tofu plan -input=false -no-color -detailed-exitcode -var-file=terraform.tfvars || echo "Plan completed with exit code: $?"
-          else
-            echo "No terraform.tfvars found; proceeding without a var file"
-            tofu plan -input=false -no-color -detailed-exitcode || echo "Plan completed with exit code: $?"
-          fi
+        if: ${{ inputs.action == 'plan' }}
+        run: tofu plan -input=false -out=tfplan
 
-      # Apply Changes (only on main branch)
-      - name: Apply
-        if: ${{ github.ref == 'refs/heads/main' && github.event_name == 'push' && inputs.apply_on_main }}
-        run: |
-          echo "Applying OpenTofu changes..."
-          tofu apply -auto-approve -input=false -no-color
+      - name: Upload plan
+        if: ${{ inputs.action == 'plan' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: tfplan-${{ inputs.environment }}
+          path: ${{ inputs.working_directory }}tfplan
+
+      # ---- DEPLOY (apply) ----
+      - name: Download plan
+        if: ${{ inputs.action == 'apply' }}
+        uses: actions/download-artifact@v4
+        with:
+          name: tfplan-${{ inputs.environment }}
+          path: ${{ inputs.working_directory }}
+
+      - name: Apply saved plan
+        if: ${{ inputs.action == 'apply' && github.ref == 'refs/heads/main' }}
+        run: tofu apply -input=false -auto-approve tfplan
