@@ -16,15 +16,19 @@ on:
         type: string
         required: true
       working_directory:
+        description: "Directory containing OpenTofu files"
         type: string
         default: "./"
       tofu_version:
+        description: "OpenTofu version to install (1.10+ required for use_lockfile)"
         type: string
-        default: "1.9.8"
+        default: "1.10.0"
       runner:
+        description: "GitHub Actions runner"
         type: string
         default: "ubuntu-latest"
       aws_region:
+        description: "AWS region"
         type: string
         default: "ap-south-1"
 
@@ -92,3 +96,98 @@ jobs:
       - name: Apply saved plan
         if: ${{ inputs.action == 'apply' && github.ref == 'refs/heads/main' }}
         run: tofu apply -input=false -auto-approve tfplan
+
+# name: OpenTofu Infrastructure - AWS (Reusable)
+
+# on:
+#   workflow_call:
+#     inputs:
+#       action:
+#         description: "plan = fmt/init/validate/plan + upload tfplan; apply = download tfplan + apply"
+#         type: string
+#         required: true
+#       environment:
+#         description: "Deployment environment (dev/prod)"
+#         type: string
+#         required: true
+#       aws_iam_role:
+#         description: "AWS IAM Role ARN to assume"
+#         type: string
+#         required: true
+#       working_directory:
+#         type: string
+#         default: "./"
+#       tofu_version:
+#         type: string
+#         default: "1.9.8"
+#       runner:
+#         type: string
+#         default: "ubuntu-latest"
+#       aws_region:
+#         type: string
+#         default: "ap-south-1"
+
+# permissions:
+#   contents: read
+#   id-token: write
+
+# jobs:
+#   opentofu:
+#     name: ${{ inputs.action == 'plan' && 'Plan' || 'Apply' }} - ${{ inputs.environment }}
+#     runs-on: ${{ inputs.runner }}
+#     environment: ${{ inputs.environment }}
+#     defaults:
+#       run:
+#         working-directory: ${{ inputs.working_directory }}
+#     env:
+#       TF_VAR_env: ${{ inputs.environment }}
+#       TF_VAR_environment: ${{ inputs.environment }}
+
+#     steps:
+#       - name: Checkout
+#         uses: actions/checkout@v4
+
+#       - name: Configure AWS Credentials (OIDC)
+#         uses: aws-actions/configure-aws-credentials@v4
+#         with:
+#           role-to-assume: ${{ inputs.aws_iam_role }}
+#           aws-region: ${{ inputs.aws_region }}
+#           role-session-name: opentofu-${{ inputs.action }}-${{ inputs.environment }}-${{ github.run_id }}
+
+#       - name: Setup OpenTofu
+#         uses: opentofu/setup-opentofu@v1
+#         with:
+#           tofu_version: ${{ inputs.tofu_version }}
+
+#       - name: Format Check
+#         run: tofu fmt -check -recursive
+
+#       - name: Init
+#         run: tofu init -input=false -backend-config=backend-${{ inputs.environment }}.hcl
+
+#       - name: Validate
+#         run: tofu validate
+
+#       # ---- BUILD (plan) ----
+#       - name: Plan
+#         if: ${{ inputs.action == 'plan' }}
+#         run: tofu plan -input=false -out=tfplan
+
+#       - name: Upload plan
+#         if: ${{ inputs.action == 'plan' }}
+#         uses: actions/upload-artifact@v4
+#         with:
+#           name: tfplan-${{ inputs.environment }}
+#           path: ${{ inputs.working_directory }}tfplan
+
+#       # ---- DEPLOY (apply) ----
+#       - name: Download plan
+#         if: ${{ inputs.action == 'apply' }}
+#         uses: actions/download-artifact@v4
+#         with:
+#           name: tfplan-${{ inputs.environment }}
+#           path: ${{ inputs.working_directory }}
+
+#       - name: Apply saved plan
+#         if: ${{ inputs.action == 'apply' && github.ref == 'refs/heads/main' }}
+#         run: tofu apply -input=false -auto-approve tfplan
